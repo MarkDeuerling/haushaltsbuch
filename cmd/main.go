@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"gitlab.com/shingeki-no-kyojin/ymir/config"
+	"gitlab.com/shingeki-no-kyojin/ymir/internal/auth"
 	"gitlab.com/shingeki-no-kyojin/ymir/internal/id"
 	"gitlab.com/shingeki-no-kyojin/ymir/internal/middleware"
-	"gitlab.com/shingeki-no-kyojin/ymir/internal/security"
 	"gitlab.com/shingeki-no-kyojin/ymir/internal/user"
 	"gitlab.com/shingeki-no-kyojin/ymir/pkg/logger"
 )
@@ -56,11 +56,15 @@ func main() {
 
 func setupRoutes(rootMux *http.ServeMux, logger logger.Logger, config *config.Config) http.Handler {
 	repo := user.NewInMemoryUserRepository()
-	idService := id.NewUUID()
-	hashService := security.NewBcryptHash()
-	tokenService := security.NewJWT(config.AccessSecret, config.RefreshSecret)
+	idService := id.UUIDGeneratorFunc(id.GenerateUUID)
+	hashService := user.PasswordHasherFunc{
+		Generate: user.GeneratePassword,
+		Validate: user.ValidatePassword,
+	}
+	tokenService := auth.NewJWT(config.AccessSecret, config.RefreshSecret)
+	mailService := user.NewMailer(config.SMTPServer, config.SMTPPort, config.SMTPUsername, config.SMTPPassword)
 
-	userUsecases := user.NewUseCase(repo, idService, hashService, tokenService, time.Duration(config.AccessTokenExpire), time.Duration(config.RefreshTokenExpire))
+	userUsecases := user.NewUseCase(repo, idService, hashService, mailService, tokenService, time.Duration(config.AccessTokenExpire), time.Duration(config.RefreshTokenExpire), time.Duration(config.VerificationTokenExpire))
 	userController := user.NewController(logger, config, userUsecases)
 
 	// public routes
@@ -73,16 +77,19 @@ func setupRoutes(rootMux *http.ServeMux, logger logger.Logger, config *config.Co
 	authMux := http.NewServeMux()
 	// authMux.HandleFunc("GET /user/refreshtoken", authController.RefreshToken)
 	authMux.HandleFunc("PUT /user/bearbeiten", userController.UpdateUser)
-	authMux.HandleFunc("PUT /user/ausloggen", userController.LogoutUser)
+	authMux.HandleFunc("POST /user/ausloggen", userController.LogoutUser)
 	authMux.HandleFunc("DELETE /user/entfernen", userController.DeleteUser)
+	authMux.HandleFunc("PUT /user/passwort/aktualisieren", userController.ChangePassword)
+	authMux.HandleFunc("PUT /user/passwort/reset", userController.ResetPassword)
+	authMux.HandleFunc("PUT /user/email/aktualisieren", userController.ChangeEmail)
 
-	authMiddleware := middleware.NewAuthorization(tokenService)
+	authMiddleware := auth.NewAuthorization(tokenService)
 	rootMux.Handle("/", authMiddleware.Authorize(authMux))
 
 	// middleware
 	handler := middleware.Chain(
 		middleware.RecoverPanic,
-		middleware.NewLogger(nil).Log,
+		middleware.NewLogger(logger).Log,
 		middleware.EnableCORS,
 	)(rootMux)
 

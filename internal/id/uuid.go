@@ -2,15 +2,15 @@ package id
 
 import "github.com/google/uuid"
 
-// UUID enables the Signatur.
-type UUID struct{}
-
-// NewUUID creates a new UUID.
-func NewUUID() *UUID {
-	return &UUID{}
-}
+// UUIDGeneratorFunc is a function type that generates a UUID.
+type UUIDGeneratorFunc func() (string, error)
 
 // GenerateUUID Signatur.
-func (id *UUID) GenerateUUID() (string, error) {
+func (f UUIDGeneratorFunc) GenerateUUID() (string, error) {
+	return f()
+}
+
+// GenerateUUID generates a new UUID as a string.
+func GenerateUUID() (string, error) {
 	return uuid.New().String(), nil
 }

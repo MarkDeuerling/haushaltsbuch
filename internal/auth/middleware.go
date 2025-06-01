@@ -1,4 +1,4 @@
-package middleware
+package auth
 
 import (
 	"context"
@@ -53,7 +53,7 @@ func (a *Authorization) Authorize(next http.Handler) http.Handler {
 
 		userID := claim.Sub
 		ctx := context.WithValue(r.Context(), UserID, userID)
-		ctx = context.WithValue(r.Context(), Token, token)
+		ctx = context.WithValue(ctx, Token, token)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

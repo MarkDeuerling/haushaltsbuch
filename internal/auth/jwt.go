@@ -1,12 +1,10 @@
-package security
+package auth
 
 import (
 	"errors"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"gitlab.com/shingeki-no-kyojin/ymir/internal/middleware"
-	"gitlab.com/shingeki-no-kyojin/ymir/internal/user"
 )
 
 // JWT is a struct that holds the JWT secret keys.
@@ -23,8 +21,8 @@ func NewJWT(accessSecret, refreshSecret string) *JWT {
 	}
 }
 
-// GenerateToken Signatur
-func (t *JWT) GenerateToken(userID user.ID, ttl time.Duration) (string, error) {
+// GenerateAccessToken Signatur
+func (t *JWT) GenerateAccessToken(userID string, ttl time.Duration) (string, error) {
 	secret := t.AccessSecret
 	token := jwt.NewWithClaims(
 		jwt.SigningMethodHS256,
@@ -38,53 +36,30 @@ func (t *JWT) GenerateToken(userID user.ID, ttl time.Duration) (string, error) {
 	if err != nil {
 		return "", err
 	}
-
 	return jwt, nil
 }
 
-// GenerateAccessToken Signatur; add  scope []string later; Not used yet
-func (t *JWT) GenerateAccessToken(userID user.ID, ttl time.Duration) (string, error) {
-	secret := t.AccessSecret
-	token := jwt.NewWithClaims(
-		jwt.SigningMethodHS256,
-		jwt.MapClaims{
-			"sub": userID,
-			"iat": time.Now().Unix(),
-			"exp": time.Now().Add(ttl).Unix(),
-			// "role":        scope[0],
-			// "permissions": scope[1],
-		},
-	)
-	jwt, err := token.SignedString(secret)
-	if err != nil {
-		return "", err
-	}
-
-	return jwt, nil
-}
-
-// GenerateRefreshToken Signatur; not used yet
-func (t *JWT) GenerateRefreshToken(userID user.ID, ttl time.Duration) (string, error) {
+// GenerateRefreshToken Signatur
+func (t *JWT) GenerateRefreshToken(userID string, ttl time.Duration) (string, error) {
 	secret := t.RefreshSecret
 	token := jwt.NewWithClaims(
 		jwt.SigningMethodHS256,
 		jwt.MapClaims{
-			"sub": userID,
-			"iat": time.Now().Unix(),
-			"exp": time.Now().Add(ttl).Unix(),
-			// "jit": id.NewUUID().GenerateUUID(),
+			"sub":  userID,
+			"iat":  time.Now().Unix(),
+			"exp":  time.Now().Add(ttl).Unix(),
+			"type": "refresh",
 		},
 	)
 	jwt, err := token.SignedString(secret)
 	if err != nil {
 		return "", err
 	}
-
 	return jwt, nil
 }
 
 // Parse Signatur parse JWT to extract the claims and validate the token.
-func (t *JWT) Parse(tokenString string) (*middleware.Claims, error) {
+func (t *JWT) Parse(tokenString string) (*Claims, error) {
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (any, error) {
 		return t.AccessSecret, nil
 	})
@@ -102,16 +77,16 @@ func (t *JWT) Parse(tokenString string) (*middleware.Claims, error) {
 		iat, _ := claims["iat"].(time.Time)
 		exp, _ := claims["exp"].(time.Time)
 		role, _ := claims["role"].(string)
-		permissions, _ := claims["permissions"].([]string)
-		jit, _ := claims["jit"].(string)
+		// permissions, _ := claims["permissions"].([]string)
+		// jit, _ := claims["jit"].(string)
 
-		return &middleware.Claims{
-			Sub:         sub,
-			Iat:         iat,
-			Exp:         exp,
-			Role:        role,
-			Permissions: permissions,
-			Jit:         jit,
+		return &Claims{
+			Sub:  sub,
+			Iat:  iat,
+			Exp:  exp,
+			Role: role,
+			// Permissions: permissions,
+			// Jit:         jit,
 		}, nil
 	}
 	return nil, errors.New("Can not parse claims")

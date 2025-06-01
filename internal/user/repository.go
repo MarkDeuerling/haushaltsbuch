@@ -40,7 +40,7 @@ func (r *InMemoryUserRepository) CreateUser(ctx context.Context, user *User) (*U
 			return nil, errors.New("user ID already exists")
 		}
 
-		user.Aktualisere()
+		user.Aktualisert()
 		user.ErstelltAm()
 
 		r.users[user.ID()] = user
@@ -165,8 +165,7 @@ func (r *InMemoryUserRepository) UpdateUser(ctx context.Context, user *User) (*U
 			}
 		}
 
-		user.Aktualisere()
-		user.SetzeErstelltAm(existingUser.ErstelltAm())
+		user.Aktualisert()
 
 		r.users[user.ID()] = user
 		if user.Email() != existingUser.Email() {
@@ -177,8 +176,8 @@ func (r *InMemoryUserRepository) UpdateUser(ctx context.Context, user *User) (*U
 	}
 }
 
-// ResetPassword updates the user's password.
-func (r *InMemoryUserRepository) ResetPassword(ctx context.Context, userID string, password []byte) error {
+// ChangePassword updates the user's password.
+func (r *InMemoryUserRepository) ChangePassword(ctx context.Context, userID string, password []byte) error {
 	return errors.New("not implemented")
 }
 

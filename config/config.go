@@ -7,12 +7,17 @@ import (
 
 // Config sets up the configurations.
 type Config struct {
-	Port               int    `envconfig:"PORT"`
-	Env                string `envconfig:"ENV"`
-	AccessSecret       string `envconfig:"ACCESS_SECRET"`
-	RefreshSecret      string `envconfig:"REFRESH_SECRET"`
-	AccessTokenExpire  int    `envconfig:"ACCESS_TOKEN_EXPIRE"`
-	RefreshTokenExpire int    `envconfig:"REFRESH_TOKEN_EXPIRE"`
+	Port                    int    `envconfig:"PORT"`
+	Env                     string `envconfig:"ENV"`
+	AccessSecret            string `envconfig:"ACCESS_SECRET"`
+	RefreshSecret           string `envconfig:"REFRESH_SECRET"`
+	AccessTokenExpire       int    `envconfig:"ACCESS_TOKEN_EXPIRE"`
+	RefreshTokenExpire      int    `envconfig:"REFRESH_TOKEN_EXPIRE"`
+	VerificationTokenExpire int    `envconfig:"VERIFY_TOKEN_EXPIRE"`
+	SMTPServer              string `envconfig:"SMTP_SERVER"`
+	SMTPPort                int    `envconfig:"SMTP_PORT"`
+	SMTPUsername            string `envconfig:"SMTP_USERNAME"`
+	SMTPPassword            string `envconfig:"SMTP_PASSWORD"`
 }
 
 // LoadConfig loads the configuration from .env file in the root directory and environment variables.

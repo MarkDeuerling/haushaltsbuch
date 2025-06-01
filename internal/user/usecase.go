@@ -3,24 +3,38 @@ package user
 import (
 	"context"
 	"errors"
+	"net/mail"
 	"time"
 )
 
 var (
+	// ErrInvalidEmail is returned when the email is invalid
+	ErrInvalidEmail = errors.New("Invalid email format")
 	// ErrEmailAlreadyExists is returned when a user is not found
 	ErrEmailAlreadyExists = errors.New("Email already exists")
+	// ErrEmailTooLong is returned when the email is too long
+	ErrEmailTooLong = errors.New("Email too long. Maximum 256 characters")
 	// ErrUserNotFound is returned when a user is not found
 	ErrUserNotFound = errors.New("User not found")
 	// ErrUserNotActive is returned when a user is not active
 	ErrUserNotActive = errors.New("User not active")
+	// ErrUserAlreadyActivated is returned when a user is already verified
+	ErrUserAlreadyActivated = errors.New("User already verified")
 	// ErrInvalidPassword is returned when the password is invalid
 	ErrInvalidPassword = errors.New("Invalid password")
-	// ErrEmptyPassword is returned when the email is empty
-	ErrEmptyPassword = errors.New("Empty password")
 	// ErrPasswordTooShort is returned when the password is too short
 	ErrPasswordTooShort = errors.New("Password too short. At least 8 characters")
-	// ErrPasswordTooLong is returned when the password is too long
-	ErrPasswordTooLong = errors.New("Password too long. Maximum 100 characters")
+	// ErrFirstNameTooLong is returned when the first name is too long
+	ErrFirstNameTooLong = errors.New("First name too long. Maximum 50 characters")
+	// ErrLastNameTooLong is returned when the last name is too long
+	ErrLastNameTooLong = errors.New("Last name too long. Maximum 50 characters")
+)
+
+const (
+	maxFirstNameLength = 128
+	maxLastNameLength  = 128
+	maxEmailLength     = 256
+	minPasswordLength  = 8
 )
 
 type repository interface {
@@ -30,7 +44,7 @@ type repository interface {
 	LogoutUser(ctx context.Context, userID, refreshToken string) error
 	DeleteUser(ctx context.Context, userID string, password []byte) error
 	UpdateUser(ctx context.Context, user *User) (*User, error)
-	ResetPassword(ctx context.Context, userID string, password []byte) error
+	ChangePassword(ctx context.Context, userID string, password []byte) error
 	ChangeEmail(ctx context.Context, userID, email string) error
 }
 
@@ -44,28 +58,37 @@ type passwordHasher interface {
 }
 
 type tokenGenerator interface {
-	GenerateToken(userID string, ttl time.Duration) (string, error)
+	GenerateAccessToken(userID string, ttl time.Duration) (string, error)
+	GenerateRefreshToken(userID string, ttl time.Duration) (string, error)
+}
+
+type emailSender interface {
+	SendVerificationEmail(to, subject, token string) error
 }
 
 // UseCase is the use case for creating a user
 type UseCase struct {
-	repo               repository
-	uuidGen            uuidGenerator
-	hash               passwordHasher
-	tokenGen           tokenGenerator
-	accessTokenExpire  time.Duration
-	refreshTokenExpire time.Duration
+	repo                    repository
+	uuidGen                 uuidGenerator
+	hash                    passwordHasher
+	mailer                  emailSender
+	tokenGen                tokenGenerator
+	accessTokenExpire       time.Duration
+	refreshTokenExpire      time.Duration
+	verificationTokenExpire time.Duration
 }
 
 // NewUseCase creates a new CreateUserUseCase
-func NewUseCase(repo repository, uuidGen uuidGenerator, hash passwordHasher, tokenGen tokenGenerator, accessTokenExpire, refreshTokenExpire time.Duration) *UseCase {
+func NewUseCase(repo repository, uuidGen uuidGenerator, hash passwordHasher, mailer emailSender, tokenGen tokenGenerator, accessTokenExpire, refreshTokenExpire, verificationTokenExpire time.Duration) *UseCase {
 	return &UseCase{
-		repo:               repo,
-		uuidGen:            uuidGen,
-		hash:               hash,
-		tokenGen:           tokenGen,
-		accessTokenExpire:  accessTokenExpire,
-		refreshTokenExpire: refreshTokenExpire,
+		repo:                    repo,
+		uuidGen:                 uuidGen,
+		hash:                    hash,
+		mailer:                  mailer,
+		tokenGen:                tokenGen,
+		accessTokenExpire:       accessTokenExpire,
+		refreshTokenExpire:      refreshTokenExpire,
+		verificationTokenExpire: verificationTokenExpire,
 	}
 }
 
@@ -77,43 +100,78 @@ type CreateInput struct {
 	Password  string
 }
 
+func (i *CreateInput) validate() error {
+	if len(i.FirstName) > maxFirstNameLength {
+		return ErrFirstNameTooLong
+	}
+	if len(i.LastName) > maxLastNameLength {
+		return ErrLastNameTooLong
+	}
+	if len(i.Email) > maxEmailLength {
+		return ErrEmailTooLong
+	}
+	if _, err := mail.ParseAddress(i.Email); err != nil {
+		return ErrInvalidEmail
+	}
+	if len(i.Password) < minPasswordLength {
+		return ErrPasswordTooShort
+	}
+	return nil
+}
+
 type userCreator interface {
 	CreateUser(ctx context.Context, input *CreateInput) error
 }
 
 // CreateUser is the interactor for creating a user
 func (c *UseCase) CreateUser(ctx context.Context, input *CreateInput) error {
-	// Need to check? Move to user entity?
-	if input.Password == "" {
-		return ErrEmptyPassword
-	}
-	if len(input.Password) < 8 {
-		return ErrPasswordTooShort
-	}
-	if len(input.Password) > 100 {
-		return ErrPasswordTooLong
+	if err := input.validate(); err != nil {
+		return err
 	}
 
 	pwdHash, err := c.hash.GeneratePassword(input.Password)
 	if err != nil {
 		return err
 	}
+
 	id, err := c.uuidGen.GenerateUUID()
 	if err != nil {
 		return err
 	}
 
-	user, err := NewUser(id, input.FirstName, input.LastName, "", input.Email, pwdHash)
+	now := time.Now()
+	user := NewUser(id, input.FirstName, input.LastName, input.Email, pwdHash, now, now)
+	if _, err = c.repo.CreateUser(ctx, user); err != nil {
+		return err
+	}
+
+	verificationToken, err := c.tokenGen.GenerateAccessToken(user.ID(), time.Second*c.verificationTokenExpire)
 	if err != nil {
 		return err
 	}
-	// Test only! should send email to verify the user
-	user.Aktiviert()
 
-	if _, err = c.repo.CreateUser(ctx, user); err != nil {
-		if errors.Is(err, ErrEmailAlreadyExists) {
-			return ErrEmailAlreadyExists
-		}
+	if err := c.mailer.SendVerificationEmail(user.Email(), "Account Verification", verificationToken); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+type userActivator interface {
+	ActivateUser(ctx context.Context, userID string) error
+}
+
+// ActivateUser is the interactor for verifying a user
+func (c *UseCase) ActivateUser(ctx context.Context, userID string) error {
+	user, err := c.repo.FindUserByID(ctx, userID)
+	if err != nil {
+		return ErrUserNotFound
+	}
+	if user.IstAktiv() {
+		return ErrUserAlreadyActivated
+	}
+	user.Aktiviert()
+	if _, err := c.repo.UpdateUser(ctx, user); err != nil {
 		return err
 	}
 	return nil
@@ -150,12 +208,12 @@ func (c *UseCase) LoginUser(ctx context.Context, input *LoginInput) (*LoginOutpu
 		return nil, ErrInvalidPassword
 	}
 
-	accessToken, err := c.tokenGen.GenerateToken(user.ID(), time.Second*c.accessTokenExpire)
+	accessToken, err := c.tokenGen.GenerateAccessToken(user.ID(), time.Second*c.accessTokenExpire)
 	if err != nil {
 		return nil, err
 	}
 
-	refreshToken, err := c.tokenGen.GenerateToken(user.ID(), time.Second*c.refreshTokenExpire)
+	refreshToken, err := c.tokenGen.GenerateRefreshToken(user.ID(), time.Second*c.refreshTokenExpire)
 	if err != nil {
 		return nil, err
 	}
@@ -214,7 +272,7 @@ type UpdateOutput struct {
 }
 
 type userUpdater interface {
-	UpdateUser(ctx context.Context, input *UpdateInput) (*UpdateOutput, error)
+	UpdateUser(context.Context, *UpdateInput) (*UpdateOutput, error)
 }
 
 // UpdateUser is the interactor for updating a user
@@ -229,42 +287,15 @@ func (c *UseCase) UpdateUser(ctx context.Context, input *UpdateInput) (*UpdateOu
 
 	// TODO: own usecase for email
 	if input.Email != nil {
-		err := user.AktualisiereEmail(*input.Email)
-		if err != ErrInvalideEmail {
-			return nil, ErrInvalideEmail
-		}
+		user.NeueEmail(*input.Email)
 	}
 
 	if input.FirstName != nil {
-		err := user.AktualisiereVorname(*input.FirstName)
-		if err != nil {
-			switch err {
-			case ErrLeererVorname:
-				return nil, ErrLeererVorname
-			case ErrVornameZuKurz:
-				return nil, ErrVornameZuKurz
-			case ErrVornameZuLang:
-				return nil, ErrVornameZuLang
-			default:
-				return nil, err
-			}
-		}
+		user.NeuerVorname(*input.FirstName)
 	}
 
 	if input.LastName != nil {
-		err := user.AktualisiereNachname(*input.LastName)
-		if err != nil {
-			switch err {
-			case ErrLeererNachname:
-				return nil, ErrLeererNachname
-			case ErrNachnameZuKurz:
-				return nil, ErrNachnameZuKurz
-			case ErrNachnameZuLang:
-				return nil, ErrNachnameZuLang
-			default:
-				return nil, err
-			}
-		}
+		user.NeuerNachname(*input.LastName)
 	}
 
 	// TODO: own usecase for password
@@ -276,7 +307,7 @@ func (c *UseCase) UpdateUser(ctx context.Context, input *UpdateInput) (*UpdateOu
 		if err != nil {
 			return nil, err
 		}
-		user.AktualisierePasswort([]byte(pwdHash))
+		user.NeuesPasswort(pwdHash)
 	}
 
 	if _, err = c.repo.UpdateUser(ctx, user); err != nil {
@@ -284,11 +315,64 @@ func (c *UseCase) UpdateUser(ctx context.Context, input *UpdateInput) (*UpdateOu
 	}
 
 	userOuput := &UpdateOutput{
-		user.Email(),
-		user.Vorname(),
-		user.Nachname(),
-		user.ErstelltAm(),
-		user.AktualisiertAm(),
+		Email:     user.Email(),
+		FirstName: user.Vorname(),
+		LastName:  user.Nachname(),
+		CreatedAt: user.ErstelltAm(),
+		UpdatedAt: user.AktualisiertAm(),
 	}
 	return userOuput, nil
+}
+
+// ChangePasswordInput is the input for the change password use case
+type ChangePasswordInput struct {
+	UserID   string
+	Password []byte
+}
+
+type passwordChanger interface {
+	ChangePassword(ctx context.Context, input *ChangePasswordInput) error
+}
+
+// ChangePassword is the interactor for changing a user's password
+func (c *UseCase) ChangePassword(ctx context.Context, input *ChangePasswordInput) error {
+	if len(input.Password) < 8 {
+		return ErrPasswordTooShort
+	}
+
+	pwdHash, err := c.hash.GeneratePassword(string(input.Password))
+	if err != nil {
+		return err
+	}
+
+	return c.repo.ChangePassword(ctx, input.UserID, pwdHash)
+}
+
+// ChangeEmailInput is the input for the change email use case
+type ChangeEmailInput struct {
+	UserID string
+	Email  string
+}
+
+type emailChanger interface {
+	ChangeEmail(context.Context, *ChangeEmailInput) error
+}
+
+// ChangeEmail is the interactor for changing a user's email
+func (c *UseCase) ChangeEmail(ctx context.Context, input *ChangeEmailInput) error {
+	return c.repo.ChangeEmail(ctx, input.UserID, input.Email)
+}
+
+type passwordResetter interface {
+	ResetPassword(ctx context.Context, email string) error
+}
+
+// ResetPassword is the interactor for resetting a user's password
+func (c *UseCase) ResetPassword(ctx context.Context, email string) error {
+	if _, err := c.repo.FindUserByEmail(ctx, email); err != nil {
+		return ErrUserNotFound
+	}
+
+	// TODO: Implement password reset logic, e.g., sending a reset link via email
+	return nil
 }
