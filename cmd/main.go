@@ -75,7 +75,6 @@ func setupRoutes(rootMux *http.ServeMux, logger logger.Logger, config *config.Co
 
 	// private routes
 	authMux := http.NewServeMux()
-	// authMux.HandleFunc("GET /user/refreshtoken", authController.RefreshToken)
 	authMux.HandleFunc("PUT /user/bearbeiten", userController.UpdateUser)
 	authMux.HandleFunc("POST /user/ausloggen", userController.LogoutUser)
 	authMux.HandleFunc("DELETE /user/entfernen", userController.DeleteUser)

@@ -2,10 +2,10 @@ package user
 
 // Mailer is a simple email service for sending emails.
 type Mailer struct {
-	SMTPServer string // SMTP server address
-	SMTPPort   int    // SMTP server port
-	Username   string // SMTP username
-	Password   string // SMTP password
+	SMTPServer string
+	SMTPPort   int
+	Username   string
+	Password   string
 }
 
 // NewMailer creates a new Mailer instance with the given SMTP configuration.
